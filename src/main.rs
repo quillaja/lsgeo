@@ -9,6 +9,7 @@ use openssl; // to make openssl/crypto c++ libs not freak out
 
 fn main() {
     let args = Searcher::parse();
+    colored::control::set_override(!args.mono);
 
     for search_path in args.search_paths() {
         args.search_glob_path(search_path).unwrap_or_else(|err| {
@@ -30,6 +31,9 @@ struct Searcher {
     /// Show field details (name, type, width, prec, nullable).
     #[arg(short, long, default_value_t = false)]
     fields: bool,
+    /// Do not color text output.
+    #[arg(short, long, default_value_t = false)]
+    mono: bool,
     /// File types to find.
     #[arg(short, long, num_args=0.., default_values=&[".gdb", ".shp", ".gpkg"])]
     exts: Vec<String>,
@@ -68,7 +72,7 @@ impl Searcher {
 
     fn print_dataset(&self, path: impl AsRef<Path>) {
         let path = path.as_ref();
-        println!("\n{}", path.display());
+        println!("\n{}", path.display().to_string().green());
         let d = match gdal::Dataset::open_ex(path, gdal::DatasetOptions::default()) {
             Ok(val) => val,
             Err(err) => {
