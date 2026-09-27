@@ -1,8 +1,14 @@
 use clap::Parser;
 use colored::*;
-use gdal::vector::{LayerAccess, OGRFieldType, OGRwkbGeometryType};
+use gdal::{
+    errors::GdalError,
+    vector::{LayerAccess, OGRFieldType, OGRwkbGeometryType},
+};
 use glob::{PatternError, glob};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    vec,
+};
 
 #[allow(unused_imports)]
 use openssl; // to make openssl/crypto c++ libs not freak out
@@ -65,7 +71,8 @@ impl Searcher {
                     continue;
                 }
             };
-            self.print_dataset(&dataset);
+            // self.print_dataset(&dataset);
+            println!("{:#?}", Dataset::new(dataset));
         }
         Ok(())
     }
@@ -105,6 +112,66 @@ impl Searcher {
                     )
                 }
             }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Dataset {
+    path: Result<String, GdalError>,
+    layers: Vec<Layer>,
+}
+
+impl Dataset {
+    fn new(path: impl AsRef<Path>) -> Self {
+        match gdal::Dataset::open_ex(&path, gdal::DatasetOptions::default()) {
+            Ok(ds) => Dataset {
+                path: Ok(String::from(path.as_ref().to_string_lossy())),
+                layers: ds.layers().map(Layer::new).collect(),
+            },
+            Err(err) => Dataset {
+                path: Err(err),
+                layers: vec![],
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Layer {
+    name: String,
+    ltype: u32,
+    fields: Vec<Field>,
+}
+
+impl Layer {
+    fn new(lyr_def: gdal::vector::Layer) -> Self {
+        let geom_type = lyr_def.defn().geometry_type();
+        Layer {
+            name: lyr_def.name(),
+            ltype: geom_type,
+            fields: lyr_def.defn().fields().map(Field::new).collect(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Field {
+    name: String,
+    ftype: u32,
+    width: i32,
+    precision: i32,
+    nullable: bool,
+}
+
+impl Field {
+    fn new(field_def: gdal::vector::Field) -> Self {
+        Field {
+            name: field_def.name(),
+            ftype: field_def.field_type(),
+            width: field_def.width(),
+            precision: field_def.precision(),
+            nullable: field_def.is_nullable(),
         }
     }
 }
