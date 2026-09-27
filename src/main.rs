@@ -21,9 +21,10 @@ fn main() {
 #[command(version, about, long_about = None, styles=clap_themes::CARGO)]
 struct Searcher {
     /// Path to begin search.
-    #[arg(short, long, default_value_t=String::from("."))]
+    // #[arg(short, long, default_value_t=String::from("."))]
+    #[arg(default_value_t=String::from("."))]
     path: String,
-    /// Recursivly search sub directories.
+    /// Recursively search sub directories.
     #[arg(short, long, default_value_t = false)]
     recurse: bool,
     /// Show field details (name, type, width, prec, nullable).
