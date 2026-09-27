@@ -1,11 +1,9 @@
 use clap::Parser;
 use colored::*;
-use gdal::{
-    errors::GdalError,
-    vector::{LayerAccess, OGRFieldType, OGRwkbGeometryType},
-};
-use glob::{PatternError, glob};
+use gdal::vector::{LayerAccess, OGRFieldType, OGRwkbGeometryType};
+use glob::glob;
 use std::{
+    error::Error,
     path::{Path, PathBuf},
     vec,
 };
@@ -17,11 +15,10 @@ fn main() {
     let args = Searcher::parse();
     colored::control::set_override(!args.mono);
 
-    for search_path in args.search_paths() {
-        args.search_glob_path(search_path).unwrap_or_else(|err| {
-            eprintln!("{}: {}", "Error".red(), err);
-        });
-    }
+    args.paths()
+        .into_iter()
+        .map(Dataset::new)
+        .for_each(|ds| args.print_dataset(&ds));
 }
 
 #[derive(Parser, Debug)]
@@ -40,12 +37,36 @@ struct Searcher {
     /// Do not color text output.
     #[arg(short, long, default_value_t = false)]
     mono: bool,
+    /// Show errors.
+    #[arg(long, default_value_t = false)]
+    errors: bool,
     /// File types to find.
     #[arg(short, long, num_args=0.., default_values=&[".gdb", ".shp", ".gpkg"])]
     exts: Vec<String>,
 }
 
 impl Searcher {
+    fn paths(&self) -> Vec<PathBuf> {
+        let mut all: Vec<PathBuf> = Vec::new();
+
+        for search_path in self.search_paths() {
+            let result = glob(search_path.to_str().unwrap());
+            let Ok(paths) = result else {
+                self.print_error(result.unwrap_err());
+                continue;
+            };
+
+            for presults in paths {
+                let Ok(path) = presults else {
+                    self.print_error(presults.unwrap_err());
+                    continue;
+                };
+                all.push(path);
+            }
+        }
+        return all;
+    }
+
     fn search_paths(&self) -> impl Iterator<Item = PathBuf> {
         let recurse = if self.recurse { "**/" } else { "" };
         let mut paths: Vec<PathBuf> = Vec::new();
@@ -60,55 +81,41 @@ impl Searcher {
         return paths.into_iter();
     }
 
-    fn search_glob_path(&self, pattern: impl AsRef<std::path::Path>) -> Result<(), PatternError> {
-        let pattern = pattern.as_ref().to_str().unwrap();
-        let paths = glob(pattern)?;
-        for path in paths {
-            let dataset = match path {
-                Ok(val) => val,
-                Err(err) => {
-                    eprintln!("{}: {}", "Failed".red(), err);
-                    continue;
-                }
-            };
-            // self.print_dataset(&dataset);
-            println!("{:#?}", Dataset::new(dataset));
+    fn print_error(&self, err: impl Error) {
+        if self.errors {
+            eprintln!("{}: {}", "Error".red(), err);
         }
-        Ok(())
     }
 
-    fn print_dataset(&self, path: impl AsRef<Path>) {
-        let path = path.as_ref();
-        println!("\n{}", path.display().to_string().green());
-        let d = match gdal::Dataset::open_ex(path, gdal::DatasetOptions::default()) {
-            Ok(val) => val,
-            Err(err) => {
-                eprintln!(
-                    "{}: {} : {}",
-                    "Failed to open".red(),
-                    path.file_name().unwrap().display(),
-                    err
-                );
-                return;
-            }
-        };
+    fn print_dataset(&self, ds: &Dataset) {
+        println!("\n{}", ds.path.green());
+        if let Some(err) = ds.err.clone() {
+            eprintln!(
+                "{}: {} : {}",
+                "Failed to open".red(),
+                Path::new(&ds.path).file_name().unwrap().display(),
+                err
+            );
+            return;
+        }
 
-        for l in d.layers() {
-            let lname = l.name();
-            let def = l.defn();
-            let gname = geom_name(def.geometry_type());
-            let nfields = def.fields().count();
-            println!("\t{:<32}{:<22}{:6} fields", lname, gname, nfields);
+        for l in &ds.layers {
+            println!(
+                "\t{:<32}{:<22}{:6} fields",
+                l.name,
+                geom_name(l.geomtype),
+                l.fields.len()
+            );
 
             if self.fields {
-                for f in def.fields() {
+                for f in &l.fields {
                     println!(
                         "\t\t{:<30}{:<8}{:5}{:3}{:>6}",
-                        f.name(),
-                        field_type(f.field_type()),
-                        f.width(),
-                        f.precision(),
-                        f.is_nullable()
+                        f.name,
+                        field_type(f.datatype),
+                        f.width,
+                        f.precision,
+                        f.nullable
                     )
                 }
             }
@@ -118,19 +125,23 @@ impl Searcher {
 
 #[derive(Debug)]
 struct Dataset {
-    path: Result<String, GdalError>,
+    path: String,
+    err: Option<String>,
     layers: Vec<Layer>,
 }
 
 impl Dataset {
     fn new(path: impl AsRef<Path>) -> Self {
+        let path = String::from(path.as_ref().to_string_lossy());
         match gdal::Dataset::open_ex(&path, gdal::DatasetOptions::default()) {
             Ok(ds) => Dataset {
-                path: Ok(String::from(path.as_ref().to_string_lossy())),
+                path: path,
+                err: None,
                 layers: ds.layers().map(Layer::new).collect(),
             },
             Err(err) => Dataset {
-                path: Err(err),
+                path: path,
+                err: Some(err.to_string()),
                 layers: vec![],
             },
         }
@@ -140,17 +151,17 @@ impl Dataset {
 #[derive(Debug)]
 struct Layer {
     name: String,
-    ltype: u32,
+    geomtype: u32,
     fields: Vec<Field>,
 }
 
 impl Layer {
-    fn new(lyr_def: gdal::vector::Layer) -> Self {
-        let geom_type = lyr_def.defn().geometry_type();
+    fn new(layer: gdal::vector::Layer) -> Self {
+        let def = layer.defn();
         Layer {
-            name: lyr_def.name(),
-            ltype: geom_type,
-            fields: lyr_def.defn().fields().map(Field::new).collect(),
+            name: layer.name(),
+            geomtype: def.geometry_type(),
+            fields: def.fields().map(Field::new).collect(),
         }
     }
 }
@@ -158,20 +169,20 @@ impl Layer {
 #[derive(Debug)]
 struct Field {
     name: String,
-    ftype: u32,
+    datatype: u32,
     width: i32,
     precision: i32,
     nullable: bool,
 }
 
 impl Field {
-    fn new(field_def: gdal::vector::Field) -> Self {
+    fn new(field: gdal::vector::Field) -> Self {
         Field {
-            name: field_def.name(),
-            ftype: field_def.field_type(),
-            width: field_def.width(),
-            precision: field_def.precision(),
-            nullable: field_def.is_nullable(),
+            name: field.name(),
+            datatype: field.field_type(),
+            width: field.width(),
+            precision: field.precision(),
+            nullable: field.is_nullable(),
         }
     }
 }
