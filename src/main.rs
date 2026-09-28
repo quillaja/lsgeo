@@ -57,8 +57,8 @@ impl Searcher {
     fn paths(&self) -> Vec<PathBuf> {
         let mut all: Vec<PathBuf> = Vec::new();
 
-        for search_path in self.search_paths() {
-            let result = glob(search_path.to_str().unwrap());
+        for pattern in self.search_patterns() {
+            let result = glob(pattern.to_str().unwrap());
             let Ok(paths) = result else {
                 self.print_error(result.unwrap_err());
                 continue;
@@ -75,18 +75,18 @@ impl Searcher {
         return all;
     }
 
-    fn search_paths(&self) -> impl Iterator<Item = PathBuf> {
+    fn search_patterns(&self) -> impl Iterator<Item = PathBuf> {
         let recurse = if self.recurse { "**/" } else { "" };
-        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut search_patterns: Vec<PathBuf> = Vec::new();
         for ext in &self.exts {
             let pattern = format!("{}/{}*{}", self.path, recurse, ext);
-            let Ok(search_path) = std::path::absolute(Path::new(&pattern)) else {
+            let Ok(abs_pattern) = std::path::absolute(Path::new(&pattern)) else {
                 println!("{}: {}", "Error".red(), pattern);
                 continue;
             };
-            paths.push(search_path);
+            search_patterns.push(abs_pattern);
         }
-        return paths.into_iter();
+        return search_patterns.into_iter();
     }
 
     fn print_error(&self, err: impl Error) {
