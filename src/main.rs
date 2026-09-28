@@ -2,6 +2,7 @@ use clap::{Parser, ValueEnum};
 use colored::*;
 use gdal::vector::{LayerAccess, OGRFieldType, OGRwkbGeometryType};
 use glob::{Paths, glob};
+use serde::Serialize;
 use std::{
     error::Error,
     iter,
@@ -16,9 +17,19 @@ fn main() {
     let args = Searcher::parse();
     colored::control::set_override(!args.mono);
 
-    args.paths()
-        .map(Dataset::new)
-        .for_each(|ds| args.print_dataset(&ds));
+    match args.format {
+        Format::Text => args
+            .paths()
+            .map(Dataset::new)
+            .for_each(|ds| args.print_dataset(&ds)),
+
+        Format::Json => match serde_json::to_string_pretty(
+            &args.paths().map(Dataset::new).collect::<Vec<Dataset>>(),
+        ) {
+            Ok(json) => println!("{}", json),
+            Err(err) => args.print_error(err),
+        },
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -121,7 +132,7 @@ impl Searcher {
             println!(
                 "\t{:<32}{:<22}{:6} fields",
                 l.name,
-                geom_name(l.geomtype),
+                l.geomtype,
                 l.fields.len()
             );
 
@@ -129,19 +140,15 @@ impl Searcher {
                 for f in &l.fields {
                     println!(
                         "\t\t{:<30}{:<8}{:5}{:3}{:>6}",
-                        f.name,
-                        field_type(f.datatype),
-                        f.width,
-                        f.precision,
-                        f.nullable
-                    )
+                        f.name, f.datatype, f.width, f.precision, f.nullable
+                    );
                 }
             }
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct Dataset {
     path: String,
     err: Option<String>,
@@ -166,10 +173,10 @@ impl Dataset {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct Layer {
     name: String,
-    geomtype: u32,
+    geomtype: String,
     fields: Vec<Field>,
 }
 
@@ -178,16 +185,16 @@ impl Layer {
         let def = layer.defn();
         Layer {
             name: layer.name(),
-            geomtype: def.geometry_type(),
+            geomtype: geom_name(def.geometry_type()).to_owned(),
             fields: def.fields().map(Field::new).collect(),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct Field {
     name: String,
-    datatype: u32,
+    datatype: String,
     width: i32,
     precision: i32,
     nullable: bool,
@@ -197,7 +204,7 @@ impl Field {
     fn new(field: gdal::vector::Field) -> Self {
         Field {
             name: field.name(),
-            datatype: field.field_type(),
+            datatype: field_type(field.field_type()).to_owned(),
             width: field.width(),
             precision: field.precision(),
             nullable: field.is_nullable(),
