@@ -1,5 +1,5 @@
 [package]
-name = "ls-layers"
+name = "lsgeo"
 version = "0.1.0"
 edition = "2024"
 description = "Find geospatial vector formats and list layer and field information."
@@ -17,6 +17,6 @@ serde_json = "1.0.151"
 [build-dependencies]
 vcpkg = "0.2.15"
 
-[[bin]]
-name = "lsgeo"
-path = "src/main.rs"
+# [[bin]]
+# name = "lsgeo"
+# path = "src/main.rs"
