@@ -1,9 +1,10 @@
 use clap::{Parser, ValueEnum};
 use colored::*;
 use gdal::vector::{LayerAccess, OGRFieldType, OGRwkbGeometryType};
-use glob::glob;
+use glob::{Paths, glob};
 use std::{
     error::Error,
+    iter,
     path::{Path, PathBuf},
     vec,
 };
@@ -16,7 +17,6 @@ fn main() {
     colored::control::set_override(!args.mono);
 
     args.paths()
-        .into_iter()
         .map(Dataset::new)
         .for_each(|ds| args.print_dataset(&ds));
 }
@@ -54,8 +54,8 @@ struct Searcher {
 }
 
 impl Searcher {
-    fn paths(&self) -> Vec<PathBuf> {
-        let mut all: Vec<PathBuf> = Vec::new();
+    fn paths(&self) -> impl Iterator<Item = PathBuf> {
+        let mut all_path_iters: Vec<Paths> = Vec::new();
 
         for pattern in self.search_patterns() {
             let result = glob(pattern.to_str().unwrap());
@@ -63,16 +63,26 @@ impl Searcher {
                 self.print_error(result.unwrap_err());
                 continue;
             };
-
-            for presults in paths {
-                let Ok(path) = presults else {
-                    self.print_error(presults.unwrap_err());
-                    continue;
-                };
-                all.push(path);
-            }
+            all_path_iters.push(paths);
         }
-        return all;
+
+        let mut lazy_paths = all_path_iters.into_iter().flatten();
+
+        // this is clunky...
+        iter::from_fn(move || {
+            loop {
+                match lazy_paths.next() {
+                    None => break None,
+                    Some(presults) => match presults {
+                        Ok(p) => break Some(p),
+                        Err(e) => {
+                            self.print_error(e);
+                            continue;
+                        }
+                    },
+                }
+            }
+        })
     }
 
     fn search_patterns(&self) -> impl Iterator<Item = PathBuf> {
