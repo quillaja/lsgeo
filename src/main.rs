@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use colored::*;
 use gdal::vector::{LayerAccess, OGRFieldType, OGRwkbGeometryType};
 use glob::glob;
@@ -21,13 +21,21 @@ fn main() {
         .for_each(|ds| args.print_dataset(&ds));
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum Format {
+    Text,
+    Json,
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None, styles=clap_themes::CARGO)]
 struct Searcher {
     /// Path to begin search.
-    // #[arg(short, long, default_value_t=String::from("."))]
     #[arg(default_value_t=String::from("."))]
     path: String,
+    /// Output format.
+    #[arg(long, value_enum, default_value_t=Format::Text)]
+    format: Format,
     /// Recursively search sub directories.
     #[arg(short, long, default_value_t = false)]
     recurse: bool,
@@ -91,7 +99,7 @@ impl Searcher {
         println!("\n{}", ds.path.green());
         if let Some(err) = ds.err.clone() {
             eprintln!(
-                "{}: {} : {}",
+                "{}: {}\n\t{}",
                 "Failed to open".red(),
                 Path::new(&ds.path).file_name().unwrap().display(),
                 err
